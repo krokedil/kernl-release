@@ -50,7 +50,7 @@ jobs:
     # Create a zip file and push it to Kernl.
     - name: Kernl Deployment
       id: kernl-deploy
-      uses: krokedil/kernl-release@v1
+      uses: krokedil/kernl-release@1.0.0
       with:
         plugin-id: 'your-plugin-id'
         plugin-slug: 'your-plugin-slug'
