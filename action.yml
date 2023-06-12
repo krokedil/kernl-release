@@ -1,0 +1,21 @@
+name: 'Kernl Deployment'
+description: 'Deploys the plugin to Kernl.'
+inputs:
+  plugin-id:
+    description: 'The plugin ID from kernl. Its the same as the id used by the update checker'
+    required: true
+  plugin-slug:
+    description: 'The plugin slug. Will be used for the zip file name and the plugin folder name'
+    required: true
+  kernl-username:
+    description: 'Kernl username'
+    required: true
+  kernl-password:
+    description: 'Kernl password'
+    required: true
+outputs:
+  zip-path:
+    description: 'The path of the zip file'
+runs:
+    using: 'node16'
+    main: 'dist/index.js'
