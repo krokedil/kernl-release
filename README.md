@@ -29,8 +29,6 @@ name: Deploy release to Kernl.
 on:
     release:
         types: [published]
-        tags:
-            - '*.*.*'
 jobs:
   build:
     runs-on: ubuntu-latest
