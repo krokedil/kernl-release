@@ -22,6 +22,7 @@ async function run(): Promise<void> {
 
         await deployToKernl(kernlToken, pluginId, zipFile, version, changelog);
 
+        core.setOutput('zip-path', zipFile);
     } catch (error) {
         core.setFailed((error as Error).message);
     }
