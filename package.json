@@ -17,11 +17,20 @@
     "@types/archiver": "^5.3.2",
     "@types/form-data": "^2.5.0",
     "@types/glob": "^8.1.0",
+    "@types/jest": "^29.5.12",
     "@types/node": "^20.2.5",
+    "@eslint/js": "^9.0.0",
     "@vercel/ncc": "^0.38.4",
-    "typescript": "^6.0.2"
+    "eslint": "^9.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.0.0"
   },
   "scripts": {
-    "build": "npx ncc build index.ts --minify -o dist"
+    "build": "npx ncc build index.ts --minify -o dist",
+    "test": "jest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   }
 }
