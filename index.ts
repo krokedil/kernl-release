@@ -7,10 +7,10 @@ import axios from 'axios';
 import FormData from 'form-data';
 
 const source = '.';
-const url = 'https://kernl.us/api/v1/auth';
-const deploymentURL = 'https://kernl.us/api/v1/plugins/';
+export const authUrl = 'https://kernl.us/api/v1/auth';
+export const deploymentURL = 'https://kernl.us/api/v1/plugins/';
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
     try {
         const pluginId = core.getInput('plugin-id');
         const pluginSlug = core.getInput('plugin-slug');
@@ -18,9 +18,9 @@ async function run(): Promise<void> {
         const kernlToken = await getKernlToken();
         const zipFile = await zipDirectory(pluginSlug);
         const version = getVersionFromFile();
-        const changelog = await getChangelog(version);
+        const changelogEntry = getChangelogEntry(version);
 
-        await deployToKernl(kernlToken, pluginId, zipFile, version, changelog);
+        await deployToKernl(kernlToken, pluginId, zipFile, version, changelogEntry);
 
         core.setOutput('zip-path', zipFile);
     } catch (error) {
@@ -28,10 +28,10 @@ async function run(): Promise<void> {
     }
 }
 
-async function getKernlToken(): Promise<string> {
+export async function getKernlToken(): Promise<string> {
     const username = core.getInput('kernl-username');
     const password = core.getInput('kernl-password');
-    const response = await axios.post(url, {
+    const response = await axios.post<string>(authUrl, {
         email: username,
         password: password
     });
@@ -39,42 +39,57 @@ async function getKernlToken(): Promise<string> {
     return response.data;
 }
 
-function getVersionFromFile(): string {
+export function getVersionFromFile(): string {
     return fs.readFileSync('kernl.version', 'utf8').trim();
 }
 
-async function getChangelog(version: string): Promise<string> {
-    const changelog = JSON.parse(fs.readFileSync('changelog.json', 'utf8'));
-    return changelog[version] ? changelog[version]['description'] : '';
+export type ChangelogEntry = {
+    description: string;
+    requires?: string;
+    tested?: string;
+};
+
+type ChangelogFile = Record<string, Partial<ChangelogEntry> | undefined>;
+
+export function getChangelogEntry(version: string): ChangelogEntry {
+    const changelog = JSON.parse(fs.readFileSync('changelog.json', 'utf8')) as ChangelogFile;
+    const entry = changelog[version];
+    return {
+        description: entry?.description ?? '',
+        requires: entry?.requires,
+        tested: entry?.tested,
+    };
 }
 
-async function zipDirectory(pluginSlug: string): Promise<string> {
+export async function zipDirectory(pluginSlug: string): Promise<string> {
     const out = `./${pluginSlug}.zip`;
     const archive = archiver('zip', { zlib: { level: 9 } });
     const stream = fs.createWriteStream(out);
     const ignoreFiles = getIgnoreFiles();
 
-    return new Promise<string>(async (resolve, reject) => {
-        archive.on('error', err => reject(err)).pipe(stream);
-        const files = await glob(`${source}/**/*`, { ignore: ignoreFiles });
+    const files = await glob(`${source}/**/*`, { ignore: ignoreFiles });
 
-        files.forEach(async (file) => {
+    return new Promise<string>((resolve, reject) => {
+        stream.on('close', () => resolve(out));
+        archive.on('error', err => reject(err));
+        archive.pipe(stream);
+
+        for (const file of files) {
             const relativePath = path.relative(source, file);
             const nameInZip = path.join(pluginSlug, relativePath);
             archive.file(file, { name: nameInZip });
-        });
+        }
 
-        await archive.finalize();
-        stream.on('close', () => resolve(out));
+        archive.finalize().catch(reject);
     });
 }
 
-function getIgnoreFiles(): string[] {
+export function getIgnoreFiles(): string[] {
     const ignore = getFilesFrom('.kernlignore');
     return [...ignore, 'DOCKER_ENV', 'docker_tag', 'output.log', '*.zip'];
 }
 
-function getFilesFrom(file: string): string[] {
+export function getFilesFrom(file: string): string[] {
     return fs.readFileSync(file, 'utf8')
         .split('\n')
         .filter(Boolean)
@@ -82,14 +97,20 @@ function getFilesFrom(file: string): string[] {
         .map(line => line.replace(/\s/g, ''));
 }
 
-async function deployToKernl(token: string, pluginId: string, zipFile: string, version: string, changelog: string): Promise<void> {
+export async function deployToKernl(token: string, pluginId: string, zipFile: string, version: string, changelogEntry: ChangelogEntry): Promise<void> {
     const url = `${deploymentURL}${pluginId}/versions`;
 
     const form = new FormData();
-    form.append('changelog', changelog);
-    form.append('fileSize', fs.statSync(zipFile).size.toString());
-    form.append('s3Url', 'none');
+    form.append('changelog', changelogEntry.description);
+    form.append('fileSize', '0');
+    form.append('s3Url', '');
     form.append('version', version);
+    if (changelogEntry.requires) {
+        form.append('requires', changelogEntry.requires);
+    }
+    if (changelogEntry.tested) {
+        form.append('tested', changelogEntry.tested);
+    }
     form.append('file', fs.createReadStream(zipFile), {
         filename: path.basename(zipFile),
         contentType: 'application/zip'
@@ -108,7 +129,7 @@ async function deployToKernl(token: string, pluginId: string, zipFile: string, v
     }
 }
 
-function getAuthHeaders(form: FormData, token: string) {
+export function getAuthHeaders(form: FormData, token: string) {
     return {
         headers: {
             ...form.getHeaders(),
@@ -117,4 +138,6 @@ function getAuthHeaders(form: FormData, token: string) {
     };
 }
 
-run();
+if (require.main === module) {
+    void run();
+}

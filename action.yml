@@ -17,5 +17,5 @@ outputs:
   zip-path:
     description: 'The path of the zip file'
 runs:
-    using: 'node16'
+    using: 'node24'
     main: 'dist/index.js'
