@@ -18,9 +18,9 @@ export async function run(): Promise<void> {
         const kernlToken = await getKernlToken();
         const zipFile = await zipDirectory(pluginSlug);
         const version = getVersionFromFile();
-        const changelog = getChangelog(version);
+        const changelogEntry = getChangelogEntry(version);
 
-        await deployToKernl(kernlToken, pluginId, zipFile, version, changelog);
+        await deployToKernl(kernlToken, pluginId, zipFile, version, changelogEntry);
 
         core.setOutput('zip-path', zipFile);
     } catch (error) {
@@ -43,11 +43,22 @@ export function getVersionFromFile(): string {
     return fs.readFileSync('kernl.version', 'utf8').trim();
 }
 
-type ChangelogFile = Record<string, { description: string } | undefined>;
+export type ChangelogEntry = {
+    description: string;
+    requires?: string;
+    tested?: string;
+};
 
-export function getChangelog(version: string): string {
+type ChangelogFile = Record<string, Partial<ChangelogEntry> | undefined>;
+
+export function getChangelogEntry(version: string): ChangelogEntry {
     const changelog = JSON.parse(fs.readFileSync('changelog.json', 'utf8')) as ChangelogFile;
-    return changelog[version]?.description ?? '';
+    const entry = changelog[version];
+    return {
+        description: entry?.description ?? '',
+        requires: entry?.requires,
+        tested: entry?.tested,
+    };
 }
 
 export async function zipDirectory(pluginSlug: string): Promise<string> {
@@ -86,14 +97,20 @@ export function getFilesFrom(file: string): string[] {
         .map(line => line.replace(/\s/g, ''));
 }
 
-export async function deployToKernl(token: string, pluginId: string, zipFile: string, version: string, changelog: string): Promise<void> {
+export async function deployToKernl(token: string, pluginId: string, zipFile: string, version: string, changelogEntry: ChangelogEntry): Promise<void> {
     const url = `${deploymentURL}${pluginId}/versions`;
 
     const form = new FormData();
-    form.append('changelog', changelog);
-    form.append('fileSize', fs.statSync(zipFile).size.toString());
-    form.append('s3Url', 'none');
+    form.append('changelog', changelogEntry.description);
+    form.append('fileSize', '0');
+    form.append('s3Url', '');
     form.append('version', version);
+    if (changelogEntry.requires) {
+        form.append('requires', changelogEntry.requires);
+    }
+    if (changelogEntry.tested) {
+        form.append('tested', changelogEntry.tested);
+    }
     form.append('file', fs.createReadStream(zipFile), {
         filename: path.basename(zipFile),
         contentType: 'application/zip'

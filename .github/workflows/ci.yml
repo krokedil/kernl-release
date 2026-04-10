@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Lint, Test, Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # GitHub Actions run the checked-in `dist/index.js`, not the TypeScript source.
+      # If a contributor edits index.ts but forgets to rebuild, the published action
+      # silently runs stale code. This step rebuilds and fails if anything in dist/
+      # changed, forcing the contributor to commit the updated bundle.
+      - name: Verify dist/ is up to date
+        run: |
+          if [ -n "$(git status --porcelain dist)" ]; then
+            echo "::error::dist/ is out of date. Run 'npm run build' locally and commit the changes."
+            echo "--- git status ---"
+            git status dist
+            echo "--- git diff ---"
+            git diff dist
+            exit 1
+          fi

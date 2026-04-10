@@ -3,7 +3,6 @@ import { Readable } from 'stream';
 
 jest.mock('fs', () => ({
     readFileSync: jest.fn(),
-    statSync: jest.fn(),
     createReadStream: jest.fn(),
     createWriteStream: jest.fn(),
     promises: {},
@@ -36,7 +35,7 @@ import {
     run,
     getKernlToken,
     getVersionFromFile,
-    getChangelog,
+    getChangelogEntry,
     getIgnoreFiles,
     getFilesFrom,
     deployToKernl,
@@ -79,21 +78,47 @@ describe('getVersionFromFile', () => {
     });
 });
 
-describe('getChangelog', () => {
-    it('returns the description for the version when present', () => {
+describe('getChangelogEntry', () => {
+    it('returns the full entry including requires and tested when present', () => {
+        mockedFs.readFileSync.mockReturnValueOnce(
+            JSON.stringify({
+                '1.2.3': {
+                    description: 'a fix',
+                    requires: '5.9.0',
+                    tested: '6.4.2',
+                },
+            }) as unknown as Buffer,
+        );
+
+        expect(getChangelogEntry('1.2.3')).toEqual({
+            description: 'a fix',
+            requires: '5.9.0',
+            tested: '6.4.2',
+        });
+    });
+
+    it('returns the description with undefined requires/tested when those fields are absent', () => {
         mockedFs.readFileSync.mockReturnValueOnce(
             JSON.stringify({ '1.2.3': { description: 'a fix' } }) as unknown as Buffer,
         );
 
-        expect(getChangelog('1.2.3')).toBe('a fix');
+        expect(getChangelogEntry('1.2.3')).toEqual({
+            description: 'a fix',
+            requires: undefined,
+            tested: undefined,
+        });
     });
 
-    it('returns empty string when the version is missing', () => {
+    it('returns an empty entry when the version is missing', () => {
         mockedFs.readFileSync.mockReturnValueOnce(
             JSON.stringify({ '9.9.9': { description: 'other' } }) as unknown as Buffer,
         );
 
-        expect(getChangelog('1.2.3')).toBe('');
+        expect(getChangelogEntry('1.2.3')).toEqual({
+            description: '',
+            requires: undefined,
+            tested: undefined,
+        });
     });
 });
 
@@ -138,15 +163,27 @@ describe('getAuthHeaders', () => {
 });
 
 describe('deployToKernl', () => {
+    let appendSpy: jest.SpyInstance;
+
     beforeEach(() => {
-        mockedFs.statSync.mockReturnValue({ size: 4242 } as unknown as fs.Stats);
         mockedFs.createReadStream.mockReturnValue(Readable.from(['x']) as unknown as fs.ReadStream);
+        appendSpy = jest.spyOn(FormData.prototype, 'append');
     });
+
+    afterEach(() => {
+        appendSpy.mockRestore();
+    });
+
+    /** Returns the value passed to `form.append(fieldName, ...)`, or undefined if never called for that field. */
+    function appendedValueFor(fieldName: string): unknown {
+        const call = appendSpy.mock.calls.find(args => args[0] === fieldName);
+        return call?.[1];
+    }
 
     it('posts to the correct versions URL on success', async () => {
         mockedAxios.post.mockResolvedValueOnce({ status: 201, data: { ok: true } });
 
-        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', 'changes');
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', { description: 'changes' });
 
         expect(mockedAxios.post).toHaveBeenCalledTimes(1);
         const [calledUrl, calledForm, calledConfig] = mockedAxios.post.mock.calls[0];
@@ -156,11 +193,56 @@ describe('deployToKernl', () => {
             .toBe('Bearer tok');
     });
 
+    it('sends fileSize as "0" and s3Url as "" so Kernl populates them server-side', async () => {
+        mockedAxios.post.mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', { description: 'changes' });
+
+        expect(appendedValueFor('fileSize')).toBe('0');
+        expect(appendedValueFor('s3Url')).toBe('');
+    });
+
+    it('appends requires and tested when both are provided in the changelog entry', async () => {
+        mockedAxios.post.mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', {
+            description: 'changes',
+            requires: '5.9.0',
+            tested: '6.4.2',
+        });
+
+        expect(appendedValueFor('changelog')).toBe('changes');
+        expect(appendedValueFor('requires')).toBe('5.9.0');
+        expect(appendedValueFor('tested')).toBe('6.4.2');
+    });
+
+    it('omits requires and tested when they are not in the changelog entry', async () => {
+        mockedAxios.post.mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', { description: 'changes' });
+
+        expect(appendedValueFor('changelog')).toBe('changes');
+        expect(appendedValueFor('requires')).toBeUndefined();
+        expect(appendedValueFor('tested')).toBeUndefined();
+    });
+
+    it('appends only requires when tested is missing', async () => {
+        mockedAxios.post.mockResolvedValueOnce({ status: 201, data: { ok: true } });
+
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', {
+            description: 'changes',
+            requires: '5.9.0',
+        });
+
+        expect(appendedValueFor('requires')).toBe('5.9.0');
+        expect(appendedValueFor('tested')).toBeUndefined();
+    });
+
     it('logs an error when the response status is not 201', async () => {
         const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
         mockedAxios.post.mockResolvedValueOnce({ status: 500, data: 'oops' });
 
-        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', 'changes');
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', { description: 'changes' });
 
         expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Unexpected HTTP status: 500'));
         errSpy.mockRestore();
@@ -170,7 +252,7 @@ describe('deployToKernl', () => {
         const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
         mockedAxios.post.mockRejectedValueOnce(new Error('boom'));
 
-        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', 'changes');
+        await deployToKernl('tok', 'plug-1', './slug.zip', '1.0.0', { description: 'changes' });
 
         expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('Error: boom'));
         errSpy.mockRestore();
@@ -193,11 +275,16 @@ describe('run (integration)', () => {
             if (file === '.kernlignore') return 'ignored\n' as unknown as Buffer;
             if (file === 'kernl.version') return '1.2.3\n' as unknown as Buffer;
             if (file === 'changelog.json') {
-                return JSON.stringify({ '1.2.3': { description: 'a fix' } }) as unknown as Buffer;
+                return JSON.stringify({
+                    '1.2.3': {
+                        description: 'a fix',
+                        requires: '5.9.0',
+                        tested: '6.4.2',
+                    },
+                }) as unknown as Buffer;
             }
             return '' as unknown as Buffer;
         });
-        mockedFs.statSync.mockReturnValue({ size: 1024 } as unknown as fs.Stats);
         mockedFs.createReadStream.mockReturnValue(Readable.from(['x']) as unknown as fs.ReadStream);
 
         const writeStream = new EventEmitter();
@@ -225,6 +312,7 @@ describe('run (integration)', () => {
 
     it('runs the happy path and sets the zip-path output', async () => {
         const { fakeArchive } = setupHappyPath();
+        const appendSpy = jest.spyOn(FormData.prototype, 'append');
 
         await run();
 
@@ -232,6 +320,15 @@ describe('run (integration)', () => {
         expect(mockedCore.setOutput).toHaveBeenCalledWith('zip-path', './my-plugin.zip');
         expect(fakeArchive.file).toHaveBeenCalledTimes(2);
         expect(fakeArchive.finalize).toHaveBeenCalledTimes(1);
+
+        // The requires/tested values from changelog.json should flow all the way through to the form.
+        const appendedFields = Object.fromEntries(
+            appendSpy.mock.calls.map(args => [args[0], args[1]]),
+        );
+        expect(appendedFields.requires).toBe('5.9.0');
+        expect(appendedFields.tested).toBe('6.4.2');
+
+        appendSpy.mockRestore();
     });
 
     it('calls setFailed when an error is thrown', async () => {
